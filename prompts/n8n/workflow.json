@@ -1,200 +1,437 @@
 {
-  "name": "Strata Enquiry Classifier — Tally + Groq",
+  "name": "Strata Enquiry Classifier \u2014 Tally + Groq + Brevo",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
         "path": "strata-enquiry",
-        "responseMode": "responseNode",
         "options": {}
       },
-      "id": "node-001",
+      "id": "252e1b1f-49a4-4296-a3ba-0b3a2270c3d3",
       "name": "Tally Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
-      "position": [220, 300],
+      "position": [
+        -1168,
+        96
+      ],
       "webhookId": "strata-tally-enquiry"
     },
     {
       "parameters": {
-        "jsCode": "// Tally webhook payload structure:\n// body.data.fields = array of { key, label, type, value }\n// Each field has a label (your form field name) and a value\n\nconst body = $input.first().json.body || $input.first().json;\nconst fields = body?.data?.fields || [];\n\n// Helper: find field value by label (case-insensitive partial match)\nfunction getField(labelSearch) {\n  const match = fields.find(f =>\n    f.label && f.label.toLowerCase().includes(labelSearch.toLowerCase())\n  );\n  if (!match) return null;\n  // Tally returns arrays for some field types\n  if (Array.isArray(match.value)) return match.value.join(', ');\n  return match.value || null;\n}\n\n// Extract fields from your Tally form\nconst name    = getField('name');\nconst email   = getField('email');\nconst phone   = getField('phone');\nconst subject = getField('subject');\nconst message = getField('message') || getField('enquiry') || getField('question');\n\nif (!message || message.trim().length === 0) {\n  throw new Error('No enquiry message found in Tally submission');\n}\n\n// Build a clean enquiry string for Groq\nlet enquiryText = '';\nif (name)    enquiryText += `From: ${name}`;\nif (email)   enquiryText += ` <${email}>`;\nif (phone)   enquiryText += ` | Phone: ${phone}`;\nif (subject) enquiryText += `\\nSubject: ${subject}`;\nenquiryText += `\\n\\n${message}`;\n\nreturn [{\n  json: {\n    enquiry_text:  enquiryText.trim(),\n    sender_name:   name,\n    sender_email:  email,\n    sender_phone:  phone,\n    subject:       subject,\n    raw_message:   message,\n    tally_form_id: body?.data?.formId || null,\n    submission_id: body?.data?.submissionId || null,\n    received_at:   new Date().toISOString()\n  }\n}];"
+        "jsCode": "// Tally webhook payload structure:\n// body.data.fields = array of { key, label, type, value }\nconst body = $input.first().json.body || $input.first().json;\nconst fields = body?.data?.fields || [];\n\n// Helper: find field value by label (case-insensitive partial match)\nfunction getField(labelSearch) {\n  const match = fields.find(f =>\n    f.label && f.label.toLowerCase().includes(labelSearch.toLowerCase())\n  );\n  if (!match) return null;\n\n  // Handle dropdown/multiple choice \u2014 return human label not internal ID\n  if (match.options && Array.isArray(match.options)) {\n    const selected = match.options.find(o => o.id === match.value || o.value === match.value);\n    if (selected) return selected.text || selected.label || selected.value;\n  }\n\n  if (Array.isArray(match.value)) return match.value.join(', ');\n  return match.value || null;\n}\n\n// Extract fields from your Tally form\nconst name    = getField('name');\nconst email   = getField('email');\nconst phone   = getField('phone');\nconst role    = getField('I am a') || getField('role') || getField('am a');\nconst subject = getField('subject');\nconst message = getField('message') || getField('enquiry') || getField('question');\n\nif (!message || message.trim().length === 0) {\n  throw new Error('No enquiry message found in Tally submission');\n}\n\n// Build a clean enquiry string for Groq\nlet enquiryText = '';\nif (name)    enquiryText += `From: ${name}`;\nif (email)   enquiryText += ` <${email}>`;\nif (phone)   enquiryText += ` | Phone: ${phone}`;\nif (role)    enquiryText += ` | Role: ${role}`;\nif (subject) enquiryText += `\\nSubject: ${subject}`;\nenquiryText += `\\n\\n${message}`;\n\nreturn [{\n  json: {\n    enquiry_text:  enquiryText.trim(),\n    sender_name:   name,\n    sender_email:  email,\n    sender_phone:  phone,\n    sender_role:   role,\n    subject:       subject,\n    raw_message:   message,\n    tally_form_id: body?.data?.formId || null,\n    submission_id: body?.data?.submissionId || null,\n    received_at:   new Date().toISOString()\n  }\n}];"
       },
-      "id": "node-002",
+      "id": "03f5e9c1-fb3f-421e-8095-881149a7540d",
       "name": "Parse Tally Fields",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [440, 300]
+      "position": [
+        -944,
+        96
+      ]
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "https://api.groq.com/openai/v1/chat/completions",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            { "name": "Authorization", "value": "=Bearer {{$credentials.httpHeaderAuth.value}}" },
-            { "name": "Content-Type",  "value": "application/json" }
-          ]
+        "jsCode": "const raw = $input.first().json.text;\nconst intake = $('Parse Tally Fields').first().json;\n\nlet classification;\ntry {\n  classification = JSON.parse(raw);\n} catch (e) {\n  throw new Error('Failed to parse Groq response: ' + e.message);\n}\n\nconst routingMap = {\n  'Maintenance Request':  'James Okoye',\n  'Levy / Fees':          'Priya Sharma',\n  'OC Certificate':       'Sarah Mitchell',\n  'AGM / Meetings':       'Sarah Mitchell',\n  'Insurance':            'Linda Cross',\n  'By-law / Compliance':  'Linda Cross',\n  'New Client / Proposal':'Marcus Webb',\n  'Building Access':      'Sarah Mitchell',\n  'Legal Threat':         'Linda Cross',\n  'General Enquiry':      'Sarah Mitchell'\n};\n\nconst isLegalThreat = classification.is_legal_threat === true;\nconst isUrgentMaintenance = classification.is_urgent_maintenance === true;\nconst isHighPriority = classification.urgency === 'High' || isLegalThreat || isUrgentMaintenance;\nconst primaryRoute = routingMap[classification.enquiry_type] || 'Sarah Mitchell';\n\nreturn [{\n  json: {\n    ...intake,\n    classification,\n    primary_route:        primaryRoute,\n    is_high_priority:     isHighPriority,\n    is_legal_threat:      isLegalThreat,\n    is_urgent_maintenance: isUrgentMaintenance,\n    processed_at:         new Date().toISOString()\n  }\n}];"
+      },
+      "id": "2baad46b-7ca6-4feb-80bc-a0a24bbf5566",
+      "name": "Parse & Enrich Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "STRATA ENQUIRY LOG"
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.2,\n  \"max_tokens\": 1000,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an AI assistant for Strata Management Consultants, an Australian strata management firm. Analyse incoming client enquiries submitted via web form and help staff process them efficiently.\\n\\nRespond ONLY with a valid JSON object — no preamble, no markdown fences, no extra text.\\n\\nRequired structure:\\n{\\n  \\\"enquiry_type\\\": one of: \\\"New Client\\\", \\\"Support Request\\\", \\\"Complaint\\\", \\\"Billing / Finance\\\", \\\"General Question\\\",\\n  \\\"urgency\\\": one of: \\\"High\\\", \\\"Medium\\\", \\\"Low\\\",\\n  \\\"confidence\\\": number 0-1,\\n  \\\"confidence_reason\\\": one sentence,\\n  \\\"sender_name\\\": extracted name or null,\\n  \\\"summary\\\": 1-2 sentence plain-English summary,\\n  \\\"suggested_response\\\": professional warm 3-5 sentence draft reply addressing sender by name,\\n  \\\"recommended_action\\\": short staff instruction,\\n  \\\"route_to\\\": array from [\\\"Accounts\\\", \\\"Building Manager\\\", \\\"New Business\\\", \\\"Client Relations\\\", \\\"Compliance\\\"],\\n  \\\"automation_potential\\\": one sentence on how this enquiry type could be automated further\\n}\\n\\nIf vague or unclear: confidence below 0.4, ask for clarification in suggested_response. Output ONLY the JSON object.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.enquiry_text }}\"\n    }\n  ]\n}",
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "received_at": "={{ $('Build Email').item.json.received_at }}",
+            "processed_at": "={{ $('Build Email').item.json.processed_at }}",
+            "sender_name": "={{ $('Build Email').item.json.sender_name }}",
+            "sender_email": "={{ $('Build Email').item.json.sender_email }}",
+            "sender_phone": "={{ $('Build Email').item.json.sender_phone }}",
+            "sender_role": "={{ $('Build Email').item.json.sender_role }}",
+            "subject": "={{ $('Build Email').item.json.subject }}",
+            "enquiry_type": "={{ $('Build Email').item.json.classification.enquiry_type }}",
+            "urgency": "={{ $('Build Email').item.json.classification.urgency }}",
+            "confidence": "={{ $('Build Email').item.json.classification.confidence }}",
+            "is_legal_threat": "={{ $('Build Email').item.json.classification.is_legal_threat }}",
+            "is_urgent_maintenance": "={{ $('Build Email').item.json.classification.is_urgent_maintenance }}",
+            "summary": "={{ $('Build Email').item.json.classification.summary }}",
+            "recommended_action": "={{ $('Build Email').item.json.classification.recommended_action }}",
+            "assigned_to": "={{ $('Build Email').item.json.classification.assigned_to }}",
+            "suggested_response": "={{ $('Build Email').item.json.classification.suggested_response }}",
+            "submission_id": "={{ $('Build Email').item.json.submission_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "received_at",
+              "displayName": "received_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "processed_at",
+              "displayName": "processed_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "submission_id",
+              "displayName": "submission_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sender_name",
+              "displayName": "sender_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sender_email",
+              "displayName": "sender_email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sender_phone",
+              "displayName": "sender_phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "sender_role",
+              "displayName": "sender_role",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "subject",
+              "displayName": "subject",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "enquiry_type",
+              "displayName": "enquiry_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "urgency",
+              "displayName": "urgency",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "confidence",
+              "displayName": "confidence",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "is_legal_threat",
+              "displayName": "is_legal_threat",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "is_urgent_maintenance",
+              "displayName": "is_urgent_maintenance",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "summary",
+              "displayName": "summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "recommended_action",
+              "displayName": "recommended_action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "assigned_to",
+              "displayName": "assigned_to",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "suggested_response",
+              "displayName": "suggested_response",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
         "options": {}
       },
-      "id": "node-003",
-      "name": "Groq — Classify Enquiry",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [660, 300],
+      "id": "12f54293-3d7f-4ce5-bd63-d2b25ad2c399",
+      "name": "Google Sheets \u2014 Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        288,
+        96
+      ],
       "credentials": {
-        "httpHeaderAuth": {
-          "id": "groq-api-key",
-          "name": "Groq API Key"
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets account 6"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "const groqResponse = $input.first().json;\nconst intake = $('Parse Tally Fields').first().json;\n\nlet classification;\ntry {\n  const content = groqResponse.choices[0].message.content;\n  classification = JSON.parse(content);\n} catch (e) {\n  throw new Error('Failed to parse Groq response: ' + e.message);\n}\n\nconst routingMap = {\n  'New Client':       'New Business',\n  'Support Request':  'Building Manager',\n  'Complaint':        'Client Relations',\n  'Billing / Finance':'Accounts',\n  'General Question': 'Client Relations'\n};\n\nconst isHighPriority = \n  classification.urgency === 'High' || \n  classification.enquiry_type === 'Complaint';\n\nconst primaryRoute = routingMap[classification.enquiry_type] || 'Client Relations';\n\nreturn [{\n  json: {\n    ...intake,\n    classification,\n    primary_route:    primaryRoute,\n    is_high_priority: isHighPriority,\n    processed_at:     new Date().toISOString()\n  }\n}];"
+        "model": "llama-3.3-70b-versatile",
+        "options": {}
       },
-      "id": "node-004",
-      "name": "Parse & Enrich Result",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [880, 300]
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        -736,
+        304
+      ],
+      "id": "4050059d-9585-4f37-8fab-a2decfbc0edd",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Groq account"
+        }
+      }
     },
     {
       "parameters": {
-        "conditions": {
-          "options": { "caseSensitive": true, "typeValidation": "strict" },
-          "conditions": [
-            {
-              "id": "cond-priority",
-              "leftValue": "={{ $json.is_high_priority }}",
-              "rightValue": true,
-              "operator": { "type": "boolean", "operation": "true" }
-            }
-          ],
-          "combinator": "and"
-        },
-        "options": {}
+        "jsCode": "const d = $input.first().json;\nconst c = d.classification;\n\nconst subject = `[${c.urgency}] ${c.enquiry_type} \u2014 ${d.sender_name || 'Unknown Sender'}`;\n\nconst htmlContent = `<h2 style=\"color:#1a1a2e\">New Enquiry Assigned to You \u2014 ${c.assigned_to}</h2><table style=\"width:100%;font-family:sans-serif;font-size:14px;border-collapse:collapse\"><tr><td style=\"padding:8px;border:1px solid #ddd;font-weight:bold\">From</td><td style=\"padding:8px;border:1px solid #ddd\">${d.sender_name || 'Unknown'} &lt;${d.sender_email || '\u2014'}&gt;</td></tr><tr><td style=\"padding:8px;border:1px solid #ddd;font-weight:bold\">Role</td><td style=\"padding:8px;border:1px solid #ddd\">${d.sender_role || '\u2014'}</td></tr><tr><td style=\"padding:8px;border:1px solid #ddd;font-weight:bold\">Phone</td><td style=\"padding:8px;border:1px solid #ddd\">${d.sender_phone || '\u2014'}</td></tr><tr><td style=\"padding:8px;border:1px solid #ddd;font-weight:bold\">Enquiry Type</td><td style=\"padding:8px;border:1px solid #ddd\">${c.enquiry_type}</td></tr><tr><td style=\"padding:8px;border:1px solid #ddd;font-weight:bold\">Urgency</td><td style=\"padding:8px;border:1px solid #ddd\">${c.urgency}</td></tr><tr><td style=\"padding:8px;border:1px solid #ddd;font-weight:bold\">Confidence</td><td style=\"padding:8px;border:1px solid #ddd\">${Math.round(c.confidence * 100)}%</td></tr></table><h3>AI Summary</h3><p style=\"font-family:sans-serif;font-size:14px\">${c.summary}</p><h3>Recommended Action</h3><p style=\"font-family:sans-serif;font-size:14px;background:#fff3cd;padding:12px;border-radius:4px\">${c.recommended_action}</p><h3>Suggested Response</h3><blockquote style=\"border-left:4px solid #4a90e2;padding:12px;background:#f9f9f9;font-family:sans-serif;font-size:14px;font-style:italic\">${c.suggested_response}</blockquote><hr><p style=\"font-family:sans-serif;font-size:12px;color:#999\">Processed by Strata Enquiry AI \u00b7 ${d.processed_at}</p>`;\n\nconst brevoPayload = JSON.stringify({\n  sender: {\n    name: \"Strata Enquiry System\",\n    email: \"YOUR_SENDER_EMAIL\"\n  },\n  to: [\n    {\n      email: \"YOUR_SENDER_EMAIL\",\n      name: \"Test\"\n    }\n  ],\n  subject: subject,\n  htmlContent: htmlContent\n});\n\nreturn [{\n  json: {\n    ...d,\n    email_subject: subject,\n    email_html: htmlContent,\n    email_to: c.assigned_email,\n    email_to_name: c.assigned_to,\n    brevo_payload: brevoPayload\n  }\n}];"
       },
-      "id": "node-005",
-      "name": "High Priority?",
-      "type": "n8n-nodes-base.if",
+      "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1100, 300]
+      "position": [
+        -176,
+        96
+      ],
+      "id": "dfc995b5-73b1-48bf-b49d-0d0831d5620a",
+      "name": "Build Email"
     },
     {
       "parameters": {
         "method": "POST",
-        "url": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": { \"type\": \"plain_text\", \"text\": \"🚨 High Priority Enquiry — {{ $json.classification.enquiry_type }}\" }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        { \"type\": \"mrkdwn\", \"text\": \"*From:*\\n{{ $json.sender_name || 'Unknown' }}\" },\n        { \"type\": \"mrkdwn\", \"text\": \"*Email:*\\n{{ $json.sender_email || '—' }}\" },\n        { \"type\": \"mrkdwn\", \"text\": \"*Urgency:*\\n{{ $json.classification.urgency }}\" },\n        { \"type\": \"mrkdwn\", \"text\": \"*Route to:*\\n{{ $json.primary_route }}\" }\n      ]\n    },\n    {\n      \"type\": \"section\",\n      \"text\": { \"type\": \"mrkdwn\", \"text\": \"*Summary:*\\n{{ $json.classification.summary }}\" }\n    },\n    {\n      \"type\": \"section\",\n      \"text\": { \"type\": \"mrkdwn\", \"text\": \"*Suggested response:*\\n{{ $json.classification.suggested_response }}\" }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        { \"type\": \"mrkdwn\", \"text\": \"Confidence: {{ Math.round($json.classification.confidence * 100) }}% · Submitted via Tally · {{ $json.received_at }}\" }\n      ]\n    }\n  ]\n}",
-        "options": {}
-      },
-      "id": "node-006",
-      "name": "Slack Alert (High Priority)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [1320, 160]
-    },
-    {
-      "parameters": {
-        "operation": "append",
-        "documentId": { "value": "YOUR_GOOGLE_SHEET_ID" },
-        "sheetName": { "value": "Enquiries" },
-        "columns": {
-          "mappingMode": "defineBelow",
-          "value": {
-            "received_at":        "={{ $json.received_at }}",
-            "processed_at":       "={{ $json.processed_at }}",
-            "submission_id":      "={{ $json.submission_id }}",
-            "tally_form_id":      "={{ $json.tally_form_id }}",
-            "sender_name":        "={{ $json.sender_name }}",
-            "sender_email":       "={{ $json.sender_email }}",
-            "sender_phone":       "={{ $json.sender_phone }}",
-            "subject":            "={{ $json.subject }}",
-            "raw_message":        "={{ $json.raw_message }}",
-            "enquiry_type":       "={{ $json.classification.enquiry_type }}",
-            "urgency":            "={{ $json.classification.urgency }}",
-            "confidence":         "={{ $json.classification.confidence }}",
-            "summary":            "={{ $json.classification.summary }}",
-            "recommended_action": "={{ $json.classification.recommended_action }}",
-            "primary_route":      "={{ $json.primary_route }}",
-            "suggested_response": "={{ $json.classification.suggested_response }}",
-            "is_high_priority":   "={{ $json.is_high_priority }}"
-          }
+        "url": "https://api.brevo.com/v3/smtp/email",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "YOUR_BREVO_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
         },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json ",
+        "body": "={{ $json.brevo_payload }}",
         "options": {}
       },
-      "id": "node-007",
-      "name": "Google Sheets — Log",
-      "type": "n8n-nodes-base.googleSheets",
+      "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.4,
-      "position": [1320, 440]
+      "position": [
+        48,
+        96
+      ],
+      "id": "bdfce90b-3710-40e9-b45a-7c94686924ad",
+      "name": "Send email to agent or person assigned to"
     },
     {
       "parameters": {
-        "jsCode": "const d = $input.first().json;\nreturn [{\n  json: {\n    success: true,\n    enquiry_type:      d.classification.enquiry_type,\n    urgency:           d.classification.urgency,\n    confidence:        d.classification.confidence,\n    summary:           d.classification.summary,\n    suggested_response:d.classification.suggested_response,\n    recommended_action:d.classification.recommended_action,\n    route_to:          d.classification.route_to,\n    primary_route:     d.primary_route,\n    is_high_priority:  d.is_high_priority,\n    processed_at:      d.processed_at\n  }\n}];"
+        "promptType": "define",
+        "text": "=={{ $json.enquiry_text }}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "You are an AI assistant for Strata Management Consultants, an Australian owners corporation (strata) management firm operating in Victoria. Your job is to analyse incoming client enquiries submitted via web form and instantly route them to the right staff member \u2014 eliminating manual triage.  The business handles these types of enquiries daily: - Maintenance requests (common property repairs, urgent issues, contractor coordination) - Levy and fee queries (overdue notices, payment receipts, special levies, sinking fund) - Owners corporation certificates (ordering, status, settlement queries) - AGM and meeting related (minutes, proxies, upcoming meetings, voting) - Insurance claims and renewals (building insurance, claim lodgement) - Compliance and by-law disputes (noise, parking, renovations, rule breaches) - New client / management proposals (owners corps looking to switch managers) - Building access products (fobs, keys, swipe cards) - General owner enquiries (portal access, document requests, contact details) - Legal / Fair Trading threats (VCAT applications, tribunal notices, legal letters)  The team members are: - Sarah Mitchell (Owners Corporation Manager) \u2014 primary contact for levy queries, AGM matters, correspondence, OC certificates, document requests. Email: sarah@stratamgmt.com.au - James Okoye (Maintenance Coordinator) \u2014 handles all maintenance requests, contractor coordination, urgent repairs, common property issues. Email: james@stratamgmt.com.au - Priya Sharma (Accounts Officer) \u2014 handles fee payments, levy notices, receipts, financial statements, sinking fund queries. Email: priya@stratamgmt.com.au - Marcus Webb (Business Development) \u2014 handles new client enquiries, management proposals, developer services, switching strata managers. Email: marcus@stratamgmt.com.au - Linda Cross (Compliance Officer) \u2014 handles by-law disputes, noise complaints, renovation approvals, VCAT/Fair Trading threats, insurance claims. Email: linda@stratamgmt.com.au  Respond ONLY with a valid JSON object \u2014 no preamble, no markdown fences, no extra text.  Required structure: {   \"enquiry_type\": one of: \"Maintenance Request\", \"Levy / Fees\", \"OC Certificate\", \"AGM / Meetings\", \"Insurance\", \"By-law / Compliance\", \"New Client / Proposal\", \"Building Access\", \"Legal Threat\", \"General Enquiry\",   \"urgency\": one of: \"High\", \"Medium\", \"Low\",   \"confidence\": number 0-1,   \"confidence_reason\": one sentence,   \"sender_name\": extracted name or null,   \"property_address\": any property address mentioned or null,   \"summary\": 1-2 sentence plain-English summary of what the client needs,   \"suggested_response\": professional warm 3-5 sentence draft reply the assigned staff member can send immediately \u2014 address sender by name, acknowledge their issue, state the next step,   \"recommended_action\": specific actionable instruction for the assigned staff member,   \"assigned_to\": full name of the most appropriate team member,   \"assigned_email\": their email address,   \"is_urgent_maintenance\": true if the maintenance issue affects safety or habitability (flooding, no power, fire, lift failure, structural) \u2014 otherwise false,   \"is_legal_threat\": true if the enquiry mentions VCAT, Fair Trading, tribunal, lawyer, or legal action \u2014 otherwise false,   \"automation_potential\": one sentence on how this enquiry type could be automated further }  Rules: - Maintenance issues affecting safety (flooding, no power, lift failure, structural damage) = High urgency always - Any mention of VCAT, Fair Trading, legal action, or lawyer = assign to Linda Cross regardless of topic - New development or switching strata managers = always Marcus Webb - Levy/fee/financial = always Priya Sharma - If vague or unclear: confidence below 0.4, ask for clarification in suggested_response  Output ONLY the JSON object."
+            }
+          ]
+        },
+        "batching": {}
       },
-      "id": "node-008",
-      "name": "Format Response",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [1540, 300]
-    },
-    {
-      "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": { "responseCode": 200 }
-      },
-      "id": "node-009",
-      "name": "Respond to Tally",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
-      "position": [1760, 300]
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -720,
+        96
+      ],
+      "id": "e4763581-ee42-4212-b16a-c16b153deaf0",
+      "name": "AI Groq \u2014 Classify & Route Enquiry"
     }
   ],
+  "pinData": {},
   "connections": {
     "Tally Webhook": {
-      "main": [[{ "node": "Parse Tally Fields", "type": "main", "index": 0 }]]
-    },
-    "Parse Tally Fields": {
-      "main": [[{ "node": "Groq — Classify Enquiry", "type": "main", "index": 0 }]]
-    },
-    "Groq — Classify Enquiry": {
-      "main": [[{ "node": "Parse & Enrich Result", "type": "main", "index": 0 }]]
-    },
-    "Parse & Enrich Result": {
-      "main": [[{ "node": "High Priority?", "type": "main", "index": 0 }]]
-    },
-    "High Priority?": {
       "main": [
         [
-          { "node": "Slack Alert (High Priority)", "type": "main", "index": 0 },
-          { "node": "Google Sheets — Log", "type": "main", "index": 0 },
-          { "node": "Format Response", "type": "main", "index": 0 }
-        ],
-        [
-          { "node": "Google Sheets — Log", "type": "main", "index": 0 },
-          { "node": "Format Response", "type": "main", "index": 0 }
+          {
+            "node": "Parse Tally Fields",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
-    "Slack Alert (High Priority)": { "main": [[]] },
-    "Google Sheets — Log": { "main": [[]] },
-    "Format Response": {
-      "main": [[{ "node": "Respond to Tally", "type": "main", "index": 0 }]]
+    "Parse Tally Fields": {
+      "main": [
+        [
+          {
+            "node": "AI Groq \u2014 Classify & Route Enquiry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Enrich Result": {
+      "main": [
+        [
+          {
+            "node": "Build Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Groq \u2014 Classify & Route Enquiry",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email": {
+      "main": [
+        [
+          {
+            "node": "Send email to agent or person assigned to",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send email to agent or person assigned to": {
+      "main": [
+        [
+          {
+            "node": "Google Sheets \u2014 Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Groq \u2014 Classify & Route Enquiry": {
+      "main": [
+        [
+          {
+            "node": "Parse & Enrich Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "pinData": {},
+  "active": true,
   "settings": {
     "executionOrder": "v1",
-    "saveManualExecutions": true
+    "binaryMode": "separate",
+    "availableInMCP": false
   },
-  "tags": ["ai", "groq", "tally", "strata", "classifier"],
-  "triggerCount": 1
+  "versionId": "22386fa0-7974-4bc8-8534-c06b12f3de9c",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
 }
