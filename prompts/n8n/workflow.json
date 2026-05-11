@@ -1,0 +1,200 @@
+{
+  "name": "Strata Enquiry Classifier — Tally + Groq",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "strata-enquiry",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-001",
+      "name": "Tally Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "strata-tally-enquiry"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Tally webhook payload structure:\n// body.data.fields = array of { key, label, type, value }\n// Each field has a label (your form field name) and a value\n\nconst body = $input.first().json.body || $input.first().json;\nconst fields = body?.data?.fields || [];\n\n// Helper: find field value by label (case-insensitive partial match)\nfunction getField(labelSearch) {\n  const match = fields.find(f =>\n    f.label && f.label.toLowerCase().includes(labelSearch.toLowerCase())\n  );\n  if (!match) return null;\n  // Tally returns arrays for some field types\n  if (Array.isArray(match.value)) return match.value.join(', ');\n  return match.value || null;\n}\n\n// Extract fields from your Tally form\nconst name    = getField('name');\nconst email   = getField('email');\nconst phone   = getField('phone');\nconst subject = getField('subject');\nconst message = getField('message') || getField('enquiry') || getField('question');\n\nif (!message || message.trim().length === 0) {\n  throw new Error('No enquiry message found in Tally submission');\n}\n\n// Build a clean enquiry string for Groq\nlet enquiryText = '';\nif (name)    enquiryText += `From: ${name}`;\nif (email)   enquiryText += ` <${email}>`;\nif (phone)   enquiryText += ` | Phone: ${phone}`;\nif (subject) enquiryText += `\\nSubject: ${subject}`;\nenquiryText += `\\n\\n${message}`;\n\nreturn [{\n  json: {\n    enquiry_text:  enquiryText.trim(),\n    sender_name:   name,\n    sender_email:  email,\n    sender_phone:  phone,\n    subject:       subject,\n    raw_message:   message,\n    tally_form_id: body?.data?.formId || null,\n    submission_id: body?.data?.submissionId || null,\n    received_at:   new Date().toISOString()\n  }\n}];"
+      },
+      "id": "node-002",
+      "name": "Parse Tally Fields",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{$credentials.httpHeaderAuth.value}}" },
+            { "name": "Content-Type",  "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama-3.3-70b-versatile\",\n  \"temperature\": 0.2,\n  \"max_tokens\": 1000,\n  \"response_format\": { \"type\": \"json_object\" },\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are an AI assistant for Strata Management Consultants, an Australian strata management firm. Analyse incoming client enquiries submitted via web form and help staff process them efficiently.\\n\\nRespond ONLY with a valid JSON object — no preamble, no markdown fences, no extra text.\\n\\nRequired structure:\\n{\\n  \\\"enquiry_type\\\": one of: \\\"New Client\\\", \\\"Support Request\\\", \\\"Complaint\\\", \\\"Billing / Finance\\\", \\\"General Question\\\",\\n  \\\"urgency\\\": one of: \\\"High\\\", \\\"Medium\\\", \\\"Low\\\",\\n  \\\"confidence\\\": number 0-1,\\n  \\\"confidence_reason\\\": one sentence,\\n  \\\"sender_name\\\": extracted name or null,\\n  \\\"summary\\\": 1-2 sentence plain-English summary,\\n  \\\"suggested_response\\\": professional warm 3-5 sentence draft reply addressing sender by name,\\n  \\\"recommended_action\\\": short staff instruction,\\n  \\\"route_to\\\": array from [\\\"Accounts\\\", \\\"Building Manager\\\", \\\"New Business\\\", \\\"Client Relations\\\", \\\"Compliance\\\"],\\n  \\\"automation_potential\\\": one sentence on how this enquiry type could be automated further\\n}\\n\\nIf vague or unclear: confidence below 0.4, ask for clarification in suggested_response. Output ONLY the JSON object.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"={{ $json.enquiry_text }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-003",
+      "name": "Groq — Classify Enquiry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [660, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "groq-api-key",
+          "name": "Groq API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const groqResponse = $input.first().json;\nconst intake = $('Parse Tally Fields').first().json;\n\nlet classification;\ntry {\n  const content = groqResponse.choices[0].message.content;\n  classification = JSON.parse(content);\n} catch (e) {\n  throw new Error('Failed to parse Groq response: ' + e.message);\n}\n\nconst routingMap = {\n  'New Client':       'New Business',\n  'Support Request':  'Building Manager',\n  'Complaint':        'Client Relations',\n  'Billing / Finance':'Accounts',\n  'General Question': 'Client Relations'\n};\n\nconst isHighPriority = \n  classification.urgency === 'High' || \n  classification.enquiry_type === 'Complaint';\n\nconst primaryRoute = routingMap[classification.enquiry_type] || 'Client Relations';\n\nreturn [{\n  json: {\n    ...intake,\n    classification,\n    primary_route:    primaryRoute,\n    is_high_priority: isHighPriority,\n    processed_at:     new Date().toISOString()\n  }\n}];"
+      },
+      "id": "node-004",
+      "name": "Parse & Enrich Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "cond-priority",
+              "leftValue": "={{ $json.is_high_priority }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "node-005",
+      "name": "High Priority?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"blocks\": [\n    {\n      \"type\": \"header\",\n      \"text\": { \"type\": \"plain_text\", \"text\": \"🚨 High Priority Enquiry — {{ $json.classification.enquiry_type }}\" }\n    },\n    {\n      \"type\": \"section\",\n      \"fields\": [\n        { \"type\": \"mrkdwn\", \"text\": \"*From:*\\n{{ $json.sender_name || 'Unknown' }}\" },\n        { \"type\": \"mrkdwn\", \"text\": \"*Email:*\\n{{ $json.sender_email || '—' }}\" },\n        { \"type\": \"mrkdwn\", \"text\": \"*Urgency:*\\n{{ $json.classification.urgency }}\" },\n        { \"type\": \"mrkdwn\", \"text\": \"*Route to:*\\n{{ $json.primary_route }}\" }\n      ]\n    },\n    {\n      \"type\": \"section\",\n      \"text\": { \"type\": \"mrkdwn\", \"text\": \"*Summary:*\\n{{ $json.classification.summary }}\" }\n    },\n    {\n      \"type\": \"section\",\n      \"text\": { \"type\": \"mrkdwn\", \"text\": \"*Suggested response:*\\n{{ $json.classification.suggested_response }}\" }\n    },\n    {\n      \"type\": \"context\",\n      \"elements\": [\n        { \"type\": \"mrkdwn\", \"text\": \"Confidence: {{ Math.round($json.classification.confidence * 100) }}% · Submitted via Tally · {{ $json.received_at }}\" }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "node-006",
+      "name": "Slack Alert (High Priority)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 160]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": { "value": "YOUR_GOOGLE_SHEET_ID" },
+        "sheetName": { "value": "Enquiries" },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "received_at":        "={{ $json.received_at }}",
+            "processed_at":       "={{ $json.processed_at }}",
+            "submission_id":      "={{ $json.submission_id }}",
+            "tally_form_id":      "={{ $json.tally_form_id }}",
+            "sender_name":        "={{ $json.sender_name }}",
+            "sender_email":       "={{ $json.sender_email }}",
+            "sender_phone":       "={{ $json.sender_phone }}",
+            "subject":            "={{ $json.subject }}",
+            "raw_message":        "={{ $json.raw_message }}",
+            "enquiry_type":       "={{ $json.classification.enquiry_type }}",
+            "urgency":            "={{ $json.classification.urgency }}",
+            "confidence":         "={{ $json.classification.confidence }}",
+            "summary":            "={{ $json.classification.summary }}",
+            "recommended_action": "={{ $json.classification.recommended_action }}",
+            "primary_route":      "={{ $json.primary_route }}",
+            "suggested_response": "={{ $json.classification.suggested_response }}",
+            "is_high_priority":   "={{ $json.is_high_priority }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "node-007",
+      "name": "Google Sheets — Log",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [1320, 440]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nreturn [{\n  json: {\n    success: true,\n    enquiry_type:      d.classification.enquiry_type,\n    urgency:           d.classification.urgency,\n    confidence:        d.classification.confidence,\n    summary:           d.classification.summary,\n    suggested_response:d.classification.suggested_response,\n    recommended_action:d.classification.recommended_action,\n    route_to:          d.classification.route_to,\n    primary_route:     d.primary_route,\n    is_high_priority:  d.is_high_priority,\n    processed_at:      d.processed_at\n  }\n}];"
+      },
+      "id": "node-008",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": { "responseCode": 200 }
+      },
+      "id": "node-009",
+      "name": "Respond to Tally",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1760, 300]
+    }
+  ],
+  "connections": {
+    "Tally Webhook": {
+      "main": [[{ "node": "Parse Tally Fields", "type": "main", "index": 0 }]]
+    },
+    "Parse Tally Fields": {
+      "main": [[{ "node": "Groq — Classify Enquiry", "type": "main", "index": 0 }]]
+    },
+    "Groq — Classify Enquiry": {
+      "main": [[{ "node": "Parse & Enrich Result", "type": "main", "index": 0 }]]
+    },
+    "Parse & Enrich Result": {
+      "main": [[{ "node": "High Priority?", "type": "main", "index": 0 }]]
+    },
+    "High Priority?": {
+      "main": [
+        [
+          { "node": "Slack Alert (High Priority)", "type": "main", "index": 0 },
+          { "node": "Google Sheets — Log", "type": "main", "index": 0 },
+          { "node": "Format Response", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Google Sheets — Log", "type": "main", "index": 0 },
+          { "node": "Format Response", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Slack Alert (High Priority)": { "main": [[]] },
+    "Google Sheets — Log": { "main": [[]] },
+    "Format Response": {
+      "main": [[{ "node": "Respond to Tally", "type": "main", "index": 0 }]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  },
+  "tags": ["ai", "groq", "tally", "strata", "classifier"],
+  "triggerCount": 1
+}
