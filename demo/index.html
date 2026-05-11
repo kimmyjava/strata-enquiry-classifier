@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Strata Enquiry Classifier — AI Demo</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Fraunces:ital,wght@0,300;0,500;1,300&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #F7F6F2;
+      --bg2: #EFEDE7;
+      --bg3: #E8E5DE;
+      --text: #1A1A18;
+      --text2: #4A4A45;
+      --text3: #8A8A82;
+      --border: #D8D5CE;
+      --border2: #C8C5BE;
+      --accent: #1A1A18;
+      --radius: 10px;
+      --radius-sm: 6px;
+    }
+
+    body {
+      font-family: 'DM Mono', monospace;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 2rem 1rem;
+    }
+
+    .container { max-width: 720px; margin: 0 auto; }
+
+    .header { margin-bottom: 2.5rem; }
+    .header-eyebrow {
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--text3);
+      margin-bottom: 8px;
+    }
+    .header-title {
+      font-family: 'Fraunces', serif;
+      font-size: 32px;
+      font-weight: 300;
+      line-height: 1.2;
+      color: var(--text);
+    }
+    .header-title em { font-style: italic; }
+    .header-desc {
+      font-size: 12px;
+      color: var(--text3);
+      margin-top: 10px;
+      line-height: 1.7;
+    }
+
+    .card {
+      background: white;
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+
+    .label {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text3);
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    input[type="password"], input[type="text"] {
+      width: 100%;
+      height: 38px;
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 0 12px;
+      background: var(--bg);
+      color: var(--text);
+      transition: border-color 0.15s;
+    }
+    input:focus { outline: none; border-color: var(--accent); }
+
+    .api-row { display: flex; gap: 8px; align-items: center; }
+    .btn-toggle {
+      font-family: 'DM Mono', monospace;
+      font-size: 11px;
+      color: var(--text3);
+      background: none;
+      border: none;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .api-status { font-size: 11px; margin-top: 6px; }
+    .status-ok { color: #2D7A4F; }
+    .status-err { color: #A0202A; }
+
+    textarea {
+      width: 100%;
+      min-height: 130px;
+      resize: vertical;
+      font-family: 'DM Mono', monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      background: var(--bg);
+      color: var(--text);
+      transition: border-color 0.15s;
+    }
+    textarea:focus { outline: none; border-color: var(--accent); }
+    textarea::placeholder { color: var(--text3); }
+
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .chip {
+      font-size: 11px;
+      font-family: 'DM Mono', monospace;
+      padding: 4px 10px;
+      border-radius: 20px;
+      border: 0.5px solid var(--border);
+      background: var(--bg);
+      color: var(--text2);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .chip:hover { border-color: var(--accent); color: var(--text); }
+
+    .actions { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+    .btn-primary {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      letter-spacing: 0.05em;
+      padding: 9px 20px;
+      border: 0.5px solid var(--accent);
+      border-radius: var(--radius-sm);
+      background: var(--accent);
+      color: white;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn-primary:hover { opacity: 0.8; }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-secondary {
+      font-family: 'DM Mono', monospace;
+      font-size: 12px;
+      padding: 9px 14px;
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text2);
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-secondary:hover { border-color: var(--accent); color: var(--text); }
+    .char-count { margin-left: auto; font-size: 11px; color: var(--text3); }
+
+    /* Results */
+    .result-card {
+      background: white;
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 1rem;
+      animation: fadeUp 0.3s ease;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .result-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 1rem 1.25rem;
+      border-bottom: 0.5px solid var(--border);
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      font-size: 11px;
+      font-family: 'DM Mono', monospace;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-weight: 500;
+    }
+    .badge-complaint { background: #FCEAEA; color: #7A1F1F; }
+    .badge-maintenance { background: #EAF0FC; color: #1F3E7A; }
+    .badge-legal { background: #FEF0E6; color: #7A3A0F; }
+    .badge-billing { background: #FFF8E6; color: #6B4C00; }
+    .badge-newclient { background: #E8F5EE; color: #1A5C35; }
+    .badge-bylaw { background: #F0EAF8; color: #4A1F7A; }
+    .badge-agm { background: #EAF5F8; color: #0F4A5C; }
+    .badge-general { background: #F2F0EB; color: #4A4A40; }
+
+    .urgency-high { background: #FCEAEA; color: #7A1F1F; }
+    .urgency-medium { background: #FFF8E6; color: #6B4C00; }
+    .urgency-low { background: #E8F5EE; color: #1A5C35; }
+
+    .conf-wrap { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+    .conf-label { font-size: 10px; color: var(--text3); }
+    .conf-bar-bg { width: 80px; height: 3px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+    .conf-bar-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.6s ease; }
+    .conf-val { font-size: 13px; font-weight: 500; }
+
+    .result-body { padding: 1.25rem; }
+    .section-label {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--text3);
+      margin-bottom: 6px;
+    }
+    .body-text { font-size: 13px; line-height: 1.7; color: var(--text2); margin-bottom: 1.25rem; }
+    .divider { height: 0.5px; background: var(--border); margin: 1.25rem 0; }
+
+    .response-box {
+      font-size: 13px;
+      line-height: 1.8;
+      color: var(--text);
+      background: var(--bg);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+      white-space: pre-wrap;
+      border-left: 3px solid var(--accent);
+    }
+
+    .meta-grid { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1.25rem; }
+    .meta-item { flex: 1; min-width: 130px; }
+    .meta-label { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text3); margin-bottom: 4px; }
+    .meta-value { font-size: 12px; color: var(--text); line-height: 1.5; }
+
+    .route-chip {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 8px;
+      border: 0.5px solid var(--border);
+      border-radius: 20px;
+      color: var(--text2);
+      margin: 2px 2px 0 0;
+    }
+
+    .auto-tip {
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      margin-top: 1rem;
+      font-size: 12px;
+      color: var(--text2);
+      line-height: 1.6;
+      background: var(--bg);
+    }
+    .auto-tip strong { color: var(--text); }
+
+    .prompt-toggle {
+      font-size: 11px;
+      color: var(--text3);
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+      background: none;
+      border: none;
+      font-family: 'DM Mono', monospace;
+      padding: 0;
+      margin-top: 1rem;
+      display: block;
+    }
+    .prompt-box {
+      font-size: 11px;
+      line-height: 1.7;
+      color: var(--text2);
+      background: var(--bg);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      margin-top: 8px;
+      white-space: pre-wrap;
+      border: 0.5px solid var(--border);
+      display: none;
+    }
+    .prompt-box.open { display: block; }
+
+    .loading-state {
+      padding: 2rem 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--text3);
+    }
+    .spinner {
+      width: 16px; height: 16px;
+      border: 1.5px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      flex-shrink: 0;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-box {
+      padding: 12px 14px;
+      font-size: 12px;
+      color: #7A1F1F;
+      background: #FCEAEA;
+      border-radius: var(--radius-sm);
+      margin: 0.5rem 0;
+      line-height: 1.6;
+    }
+
+    .model-pill {
+      font-size: 10px;
+      color: var(--text3);
+      border: 0.5px solid var(--border);
+      border-radius: 20px;
+      padding: 2px 8px;
+      margin-left: auto;
+    }
+
+    .history-section { margin-top: 1.5rem; }
+    .history-label { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text3); margin-bottom: 8px; }
+    .history-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border: 0.5px solid var(--border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      margin-bottom: 6px;
+      background: white;
+      transition: border-color 0.15s;
+    }
+    .history-item:hover { border-color: var(--accent); }
+    .history-snippet { font-size: 11px; color: var(--text2); flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+    .footer {
+      margin-top: 3rem;
+      padding-top: 1.5rem;
+      border-top: 0.5px solid var(--border);
+      font-size: 11px;
+      color: var(--text3);
+      line-height: 1.7;
+    }
+    .footer a { color: var(--text3); }
+  </style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <p class="header-eyebrow">Strata Management Consultants — AI Demo</p>
+    <h1 class="header-title">Enquiry <em>Classifier</em></h1>
+    <p class="header-desc">Paste a client enquiry below. The AI will classify it, assign the right staff member, and draft a suggested response — in under 2 seconds.</p>
+  </div>
+
+  <!-- API Key -->
+  <div class="card">
+    <label class="label" for="api-key">Groq API Key</label>
+    <div class="api-row">
+      <input type="password" id="api-key" placeholder="gsk_..." oninput="checkKey()" />
+      <button class="btn-toggle" onclick="toggleKey()">show</button>
+    </div>
+    <p class="api-status" id="api-status"></p>
+  </div>
+
+  <!-- Enquiry Input -->
+  <div class="card">
+    <label class="label" for="enquiry">Client Enquiry</label>
+    <textarea id="enquiry" placeholder="Paste or type a client enquiry here..." oninput="updateCount()"></textarea>
+    <div class="chips">
+      <span class="chip" onclick="loadExample(0)">Urgent maintenance</span>
+      <span class="chip" onclick="loadExample(1)">Levy query</span>
+      <span class="chip" onclick="loadExample(2)">New client</span>
+      <span class="chip" onclick="loadExample(3)">By-law complaint</span>
+      <span class="chip" onclick="loadExample(4)">Legal threat</span>
+      <span class="chip" onclick="loadExample(5)">Vague input</span>
+    </div>
+    <div class="actions">
+      <button class="btn-primary" id="analyse-btn" onclick="analyse()">Analyse enquiry</button>
+      <button class="btn-secondary" onclick="clearAll()">Clear</button>
+      <span class="char-count" id="char-count">0 chars</span>
+    </div>
+  </div>
+
+  <div id="result-area"></div>
+  <div id="history-area"></div>
+
+  <div class="footer">
+    Built by Kimberly Java · AI Automation Specialist<br>
+    Powered by <strong>Groq</strong> (llama-3.3-70b-versatile) · Orchestrated via <strong>n8n</strong><br>
+    <a href="https://github.com/kimmyjava" target="_blank">github.com/kimmyjava</a>
+  </div>
+</div>
+
+<script>
+const EXAMPLES = [
+  "From: Tom Reynolds <tom.reynolds@email.com> | Role: Lot Owner\n\nHi, the lift in our building at 12 Hawthorn Place Burwood East has been out of order since yesterday morning. We have elderly residents on level 4 who cannot use the stairs. This is a serious safety issue and needs urgent attention today.",
+  "Hello, just wanting to check on the status of the sinking fund levy payment that was due last week. We've processed our side but haven't received a confirmation receipt. Also, is the annual financial report available yet? Thanks, Michelle Tran.",
+  "Hi, my name is David Nguyen. We are completing a 24-lot mixed-use development in South Yarra and are looking for a strata management company to take over once the OC is registered. We'd like to discuss your services and receive a management proposal. Expected completion is August 2026.",
+  "We have received multiple complaints from residents about excessive noise coming from lot 12 at 34 Park Street Fitzroy, particularly late at night on weekends. This has been ongoing for two months. We need to formally issue a by-law breach notice. — Karen Hobbs, Committee Member",
+  "I have been trying to get the owners corporation to address water damage from the common roof into my unit for four months with no resolution. I have now engaged a solicitor and will be lodging a VCAT application next week if this is not resolved immediately. Consider this formal notice. — Robert Malone",
+  "Hey someone told me to email here. Not sure if this is the right place but I have a question"
+];
+
+let history = [];
+
+const SYSTEM_PROMPT = `You are an AI assistant for Strata Management Consultants, an Australian owners corporation (strata) management firm operating in Victoria. Your job is to analyse incoming client enquiries submitted via web form and instantly route them to the right staff member — eliminating manual triage.
+
+The business handles these types of enquiries daily:
+- Maintenance requests (common property repairs, urgent issues, contractor coordination)
+- Levy and fee queries (overdue notices, payment receipts, special levies, sinking fund)
+- Owners corporation certificates (ordering, status, settlement queries)
+- AGM and meeting related (minutes, proxies, upcoming meetings, voting)
+- Insurance claims and renewals (building insurance, claim lodgement)
+- Compliance and by-law disputes (noise, parking, renovations, rule breaches)
+- New client / management proposals (owners corps looking to switch managers)
+- Building access products (fobs, keys, swipe cards)
+- General owner enquiries (portal access, document requests, contact details)
+- Legal / Fair Trading threats (VCAT applications, tribunal notices, legal letters)
+
+The team members are:
+- Sarah Mitchell (Owners Corporation Manager) — levy queries, AGM matters, OC certificates, document requests. Email: sarah@stratamgmt.com.au
+- James Okoye (Maintenance Coordinator) — maintenance requests, contractor coordination, urgent repairs. Email: james@stratamgmt.com.au
+- Priya Sharma (Accounts Officer) — fee payments, levy notices, receipts, financial statements. Email: priya@stratamgmt.com.au
+- Marcus Webb (Business Development) — new client enquiries, management proposals, developer services. Email: marcus@stratamgmt.com.au
+- Linda Cross (Compliance Officer) — by-law disputes, renovation approvals, VCAT/Fair Trading threats, insurance claims. Email: linda@stratamgmt.com.au
+
+Respond ONLY with a valid JSON object — no preamble, no markdown fences, no extra text.
+
+Required structure:
+{
+  "enquiry_type": one of: "Maintenance Request", "Levy / Fees", "OC Certificate", "AGM / Meetings", "Insurance", "By-law / Compliance", "New Client / Proposal", "Building Access", "Legal Threat", "General Enquiry",
+  "urgency": one of: "High", "Medium", "Low",
+  "confidence": number 0-1,
+  "confidence_reason": one sentence explaining your confidence or uncertainty,
+  "sender_name": extracted name or null,
+  "property_address": any property address mentioned or null,
+  "summary": 1-2 sentence plain-English summary of what the client needs,
+  "suggested_response": professional warm 3-5 sentence draft reply addressing sender by name,
+  "recommended_action": specific actionable instruction for the assigned staff member,
+  "assigned_to": full name of the most appropriate team member,
+  "assigned_email": their email address,
+  "is_urgent_maintenance": true if safety-affecting maintenance (flooding, no power, lift failure, structural) — otherwise false,
+  "is_legal_threat": true if mentions VCAT, Fair Trading, tribunal, lawyer, or legal action — otherwise false,
+  "automation_potential": one sentence on how this enquiry type could be automated further
+}
+
+Rules:
+- Maintenance issues affecting safety = High urgency always
+- Any mention of VCAT, Fair Trading, legal action, or lawyer = assign to Linda Cross
+- New development or switching managers = always Marcus Webb
+- Levy/fee/financial = always Priya Sharma
+- If vague or unclear: confidence below 0.4, ask for clarification in suggested_response
+
+Output ONLY the JSON object.`;
+
+function checkKey() {
+  const k = document.getElementById('api-key').value.trim();
+  const s = document.getElementById('api-status');
+  if (!k) { s.textContent = ''; return; }
+  if (k.startsWith('gsk_') && k.length > 20) {
+    s.textContent = '✓ Key looks valid';
+    s.className = 'api-status status-ok';
+  } else {
+    s.textContent = 'Groq keys usually start with gsk_';
+    s.className = 'api-status status-err';
+  }
+}
+
+function toggleKey() {
+  const inp = document.getElementById('api-key');
+  const btn = event.target;
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+  btn.textContent = inp.type === 'password' ? 'show' : 'hide';
+}
+
+function updateCount() {
+  const v = document.getElementById('enquiry').value;
+  document.getElementById('char-count').textContent = v.length + ' chars';
+}
+
+function loadExample(i) {
+  document.getElementById('enquiry').value = EXAMPLES[i];
+  updateCount();
+}
+
+function clearAll() {
+  document.getElementById('enquiry').value = '';
+  document.getElementById('result-area').innerHTML = '';
+  updateCount();
+}
+
+function getBadgeClass(type) {
+  const map = {
+    'maintenance request': 'badge-maintenance',
+    'levy / fees': 'badge-billing',
+    'legal threat': 'badge-legal',
+    'by-law / compliance': 'badge-bylaw',
+    'new client / proposal': 'badge-newclient',
+    'agm / meetings': 'badge-agm',
+    'general enquiry': 'badge-general',
+    'insurance': 'badge-billing',
+    'oc certificate': 'badge-agm',
+    'building access': 'badge-general'
+  };
+  return map[(type || '').toLowerCase()] || 'badge-general';
+}
+
+function getUrgencyClass(u) {
+  const l = (u || '').toLowerCase();
+  if (l.includes('high')) return 'urgency-high';
+  if (l.includes('medium')) return 'urgency-medium';
+  return 'urgency-low';
+}
+
+async function analyse() {
+  const apiKey = document.getElementById('api-key').value.trim();
+  const text = document.getElementById('enquiry').value.trim();
+  if (!apiKey) { alert('Please enter your Groq API key first.'); return; }
+  if (!text) { alert('Please enter an enquiry to analyse.'); return; }
+
+  const btn = document.getElementById('analyse-btn');
+  btn.disabled = true;
+  btn.textContent = 'Analysing...';
+
+  document.getElementById('result-area').innerHTML = `
+    <div class="result-card">
+      <div class="loading-state">
+        <div class="spinner"></div>
+        <span>Classifying with Groq (llama-3.3-70b-versatile)...</span>
+      </div>
+    </div>`;
+
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: 'llama-3.3-70b-versatile',
+        temperature: 0.2,
+        max_tokens: 1000,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'user', content: text }
+        ]
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error?.message || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const result = JSON.parse(data.choices[0].message.content);
+    renderResult(result, text);
+    addToHistory(text, result);
+  } catch (err) {
+    document.getElementById('result-area').innerHTML = `<div class="error-box">⚠ ${err.message}</div>`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Analyse enquiry';
+}
+
+function renderResult(r, text) {
+  const pct = Math.round((r.confidence || 0) * 100);
+  const typeClass = getBadgeClass(r.enquiry_type);
+  const urgClass = getUrgencyClass(r.urgency);
+  const routes = (r.route_to || [r.assigned_to]).filter(Boolean).map(t =>
+    `<span class="route-chip">${t}</span>`).join('');
+
+  document.getElementById('result-area').innerHTML = `
+    <div class="result-card">
+      <div class="result-header">
+        <span class="badge ${typeClass}">${r.enquiry_type || '—'}</span>
+        <span class="badge ${urgClass}">${r.urgency || '—'}</span>
+        <span class="model-pill">llama-3.3-70b · groq</span>
+        <div class="conf-wrap">
+          <span class="conf-label">confidence</span>
+          <div class="conf-bar-bg"><div class="conf-bar-fill" id="conf-fill" style="width:0%"></div></div>
+          <span class="conf-val">${pct}%</span>
+        </div>
+      </div>
+      <div class="result-body">
+        <p class="section-label">Summary</p>
+        <p class="body-text">${r.summary || '—'}</p>
+
+        <p class="section-label">Confidence note</p>
+        <p class="body-text">${r.confidence_reason || '—'}</p>
+
+        <div class="divider"></div>
+
+        <p class="section-label">Suggested response</p>
+        <div class="response-box">${r.suggested_response || '—'}</div>
+
+        <div class="meta-grid">
+          <div class="meta-item">
+            <p class="meta-label">Sender</p>
+            <p class="meta-value">${r.sender_name || '(not identified)'}</p>
+          </div>
+          <div class="meta-item">
+            <p class="meta-label">Assigned to</p>
+            <p class="meta-value">${r.assigned_to || '—'}<br><span style="color:var(--text3);font-size:11px">${r.assigned_email || ''}</span></p>
+          </div>
+          <div class="meta-item">
+            <p class="meta-label">Recommended action</p>
+            <p class="meta-value">${r.recommended_action || '—'}</p>
+          </div>
+          ${r.property_address ? `<div class="meta-item"><p class="meta-label">Property</p><p class="meta-value">${r.property_address}</p></div>` : ''}
+        </div>
+
+        ${r.is_legal_threat ? '<div style="margin-top:1rem;padding:10px 12px;background:#FEF0E6;border-radius:6px;font-size:12px;color:#7A3A0F">⚠ <strong>Legal threat detected</strong> — escalate to Linda Cross immediately</div>' : ''}
+        ${r.is_urgent_maintenance ? '<div style="margin-top:8px;padding:10px 12px;background:#FCEAEA;border-radius:6px;font-size:12px;color:#7A1F1F">🔴 <strong>Urgent maintenance</strong> — safety issue, contact James Okoye now</div>' : ''}
+
+        <div class="divider"></div>
+
+        <div class="auto-tip">
+          <strong>Automation potential:</strong> ${r.automation_potential || '—'}
+        </div>
+
+        <button class="prompt-toggle" onclick="togglePrompt(this)">View system prompt & design notes →</button>
+        <div class="prompt-box">${SYSTEM_PROMPT}</div>
+      </div>
+    </div>`;
+
+  setTimeout(() => {
+    const f = document.getElementById('conf-fill');
+    if (f) f.style.width = pct + '%';
+  }, 100);
+}
+
+function togglePrompt(btn) {
+  const box = btn.nextElementSibling;
+  box.classList.toggle('open');
+  btn.textContent = box.classList.contains('open') ? 'Hide system prompt ↑' : 'View system prompt & design notes →';
+}
+
+function addToHistory(text, result) {
+  history.unshift({ text, result });
+  if (history.length > 5) history.pop();
+  renderHistory();
+}
+
+function renderHistory() {
+  if (history.length <= 1) return;
+  const area = document.getElementById('history-area');
+  const items = history.slice(1).map((h, i) => {
+    const tc = getBadgeClass(h.result.enquiry_type);
+    return `<div class="history-item" onclick="reloadHistory(${i + 1})">
+      <span class="badge ${tc}" style="font-size:10px;padding:2px 8px">${h.result.enquiry_type}</span>
+      <span class="history-snippet">${h.text.substring(0, 80)}...</span>
+    </div>`;
+  }).join('');
+  area.innerHTML = `<div class="history-section"><p class="history-label">Recent — click to reload</p>${items}</div>`;
+}
+
+function reloadHistory(i) {
+  const h = history[i];
+  document.getElementById('enquiry').value = h.text;
+  updateCount();
+  renderResult(h.result, h.text);
+}
+</script>
+</body>
+</html>
